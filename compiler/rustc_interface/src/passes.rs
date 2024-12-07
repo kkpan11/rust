@@ -54,10 +54,6 @@ pub(crate) fn parse<'a>(sess: &'a Session) -> Result<ast::Crate> {
         })
         .map_err(|parse_error| parse_error.emit())?;
 
-    if let Some(ref s) = sess.opts.unstable_opts.show_span {
-        rustc_ast_passes::show_span::run(sess.dcx(), s, &krate);
-    }
-
     if sess.opts.unstable_opts.input_stats {
         input_stats::print_ast_stats(&krate, "PRE EXPANSION AST STATS", "ast-stats-1");
     }
@@ -880,7 +876,6 @@ fn run_required_analyses(tcx: TyCtxt<'_>) {
                 || tcx.hir().body_const_context(def_id).is_some()
             {
                 tcx.ensure().mir_drops_elaborated_and_const_checked(def_id);
-                tcx.ensure().unused_generic_params(ty::InstanceKind::Item(def_id.to_def_id()));
             }
         }
     });
@@ -899,8 +894,7 @@ fn run_required_analyses(tcx: TyCtxt<'_>) {
     // If `-Zvalidate-mir` is set, we also want to compute the final MIR for each item
     // (either its `mir_for_ctfe` or `optimized_mir`) since that helps uncover any bugs
     // in MIR optimizations that may only be reachable through codegen, or other codepaths
-    // that requires the optimized/ctfe MIR, such as polymorphization, coroutine bodies,
-    // or evaluating consts.
+    // that requires the optimized/ctfe MIR, coroutine bodies, or evaluating consts.
     if tcx.sess.opts.unstable_opts.validate_mir {
         sess.time("ensuring_final_MIR_is_computable", || {
             tcx.hir().par_body_owners(|def_id| {
