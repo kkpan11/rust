@@ -908,6 +908,11 @@ pub(crate) struct QueryUntracked {
 pub(crate) struct SpanUseEqCtxtDiag;
 
 #[derive(LintDiagnostic)]
+#[diag(lint_symbol_intern_string_literal)]
+#[help]
+pub(crate) struct SymbolInternStringLiteralDiag;
+
+#[derive(LintDiagnostic)]
 #[diag(lint_tykind_kind)]
 pub(crate) struct TykindKind {
     #[suggestion(code = "ty", applicability = "maybe-incorrect")]
@@ -1810,13 +1815,80 @@ pub(crate) enum AmbiguousWidePointerComparisonsAddrSuggestion<'a> {
     },
 }
 
+#[derive(LintDiagnostic)]
+pub(crate) enum UnpredictableFunctionPointerComparisons<'a> {
+    #[diag(lint_unpredictable_fn_pointer_comparisons)]
+    #[note(lint_note_duplicated_fn)]
+    #[note(lint_note_deduplicated_fn)]
+    #[note(lint_note_visit_fn_addr_eq)]
+    Suggestion {
+        #[subdiagnostic]
+        sugg: UnpredictableFunctionPointerComparisonsSuggestion<'a>,
+    },
+    #[diag(lint_unpredictable_fn_pointer_comparisons)]
+    #[note(lint_note_duplicated_fn)]
+    #[note(lint_note_deduplicated_fn)]
+    #[note(lint_note_visit_fn_addr_eq)]
+    Warn,
+}
+
+#[derive(Subdiagnostic)]
+#[multipart_suggestion(
+    lint_fn_addr_eq_suggestion,
+    style = "verbose",
+    applicability = "maybe-incorrect"
+)]
+pub(crate) struct UnpredictableFunctionPointerComparisonsSuggestion<'a> {
+    pub ne: &'a str,
+    pub cast_right: String,
+    pub deref_left: &'a str,
+    pub deref_right: &'a str,
+    #[suggestion_part(code = "{ne}std::ptr::fn_addr_eq({deref_left}")]
+    pub left: Span,
+    #[suggestion_part(code = ", {deref_right}")]
+    pub middle: Span,
+    #[suggestion_part(code = "{cast_right})")]
+    pub right: Span,
+}
+
+pub(crate) struct ImproperCTypesLayer<'a> {
+    pub ty: Ty<'a>,
+    pub inner_ty: Option<Ty<'a>>,
+    pub note: DiagMessage,
+    pub span_note: Option<Span>,
+    pub help: Option<DiagMessage>,
+}
+
+impl<'a> Subdiagnostic for ImproperCTypesLayer<'a> {
+    fn add_to_diag_with<G: EmissionGuarantee, F: SubdiagMessageOp<G>>(
+        self,
+        diag: &mut Diag<'_, G>,
+        f: &F,
+    ) {
+        diag.arg("ty", self.ty);
+        if let Some(ty) = self.inner_ty {
+            diag.arg("inner_ty", ty);
+        }
+
+        if let Some(help) = self.help {
+            let msg = f(diag, help.into());
+            diag.help(msg);
+        }
+
+        let msg = f(diag, self.note.into());
+        diag.note(msg);
+        if let Some(note) = self.span_note {
+            let msg = f(diag, fluent::lint_note.into());
+            diag.span_note(note, msg);
+        };
+    }
+}
+
 pub(crate) struct ImproperCTypes<'a> {
     pub ty: Ty<'a>,
     pub desc: &'a str,
     pub label: Span,
-    pub help: Option<DiagMessage>,
-    pub note: DiagMessage,
-    pub span_note: Option<Span>,
+    pub reasons: Vec<ImproperCTypesLayer<'a>>,
 }
 
 // Used because of the complexity of Option<DiagMessage>, DiagMessage, and Option<Span>
@@ -1826,12 +1898,8 @@ impl<'a> LintDiagnostic<'a, ()> for ImproperCTypes<'_> {
         diag.arg("ty", self.ty);
         diag.arg("desc", self.desc);
         diag.span_label(self.label, fluent::lint_label);
-        if let Some(help) = self.help {
-            diag.help(help);
-        }
-        diag.note(self.note);
-        if let Some(note) = self.span_note {
-            diag.span_note(note, fluent::lint_note);
+        for reason in self.reasons.into_iter() {
+            diag.subdiagnostic(reason);
         }
     }
 }
