@@ -36,12 +36,11 @@ extern crate rustc_errors;
 extern crate rustc_parse;
 extern crate rustc_session;
 extern crate rustc_span;
-extern crate smallvec;
 
 use std::mem;
 use std::process::ExitCode;
 
-use rustc_ast::ast::{DUMMY_NODE_ID, Expr, ExprKind, Stmt};
+use rustc_ast::ast::{DUMMY_NODE_ID, Expr, ExprKind};
 use rustc_ast::mut_visit::{self, DummyAstNode as _, MutVisitor};
 use rustc_ast::node_id::NodeId;
 use rustc_ast::ptr::P;
@@ -50,7 +49,6 @@ use rustc_errors::Diag;
 use rustc_parse::parser::Recovery;
 use rustc_session::parse::ParseSess;
 use rustc_span::{DUMMY_SP, FileName, Span};
-use smallvec::SmallVec;
 
 // Every parenthesis in the following expressions is re-inserted by the
 // pretty-printer.
@@ -63,6 +61,9 @@ static EXPRS: &[&str] = &[
     "(2 + 2) * 2",
     "2 * (2 + 2)",
     "2 + 2 + 2",
+    // Right-associative operator.
+    "2 += 2 += 2",
+    "(2 += 2) += 2",
     // Return has lower precedence than a binary operator.
     "(return 2) + 2",
     "2 + (return 2)", // FIXME: no parenthesis needed.
@@ -70,6 +71,12 @@ static EXPRS: &[&str] = &[
     // These mean different things.
     "return - 2",
     "(return) - 2",
+    // Closures and jumps have equal precedence.
+    "|| return break 2",
+    "return break || 2",
+    // Closures with a return type have especially high precedence.
+    "|| -> T { x } + 1",
+    "(|| { x }) + 1",
     // These mean different things.
     "if let _ = true && false {}",
     "if let _ = (true && false) {}",
@@ -85,6 +92,13 @@ static EXPRS: &[&str] = &[
     // allowed, except if the break is also labeled.
     "break 'outer 'inner: loop {} + 2",
     "break ('inner: loop {} + 2)",
+    // Grammar restriction: ranges cannot be the endpoint of another range.
+    "(2..2)..2",
+    "2..(2..2)",
+    "(2..2)..",
+    "..(2..2)",
+    // Grammar restriction: comparison operators cannot be chained (1 < 2 == false).
+    "((1 < 2) == false) as usize",
     // Grammar restriction: the value in let-else is not allowed to end in a
     // curly brace.
     "{ let _ = 1 + 1 else {}; }",
@@ -107,10 +121,6 @@ static EXPRS: &[&str] = &[
     /*
     // FIXME: pretty-printer produces invalid syntax. `if (let _ = () && Struct {}.x) {}`
     "if let _ = () && (Struct {}).x {}",
-    */
-    /*
-    // FIXME: pretty-printer produces invalid syntax. `(1 < 2 == false) as usize`
-    "((1 < 2) == false) as usize",
     */
     /*
     // FIXME: pretty-printer produces invalid syntax. `for _ in 1..{ 2 } {}`
@@ -163,18 +173,6 @@ impl MutVisitor for Normalize {
 
     fn visit_span(&mut self, span: &mut Span) {
         *span = DUMMY_SP;
-    }
-
-    fn visit_expr(&mut self, expr: &mut P<Expr>) {
-        if let ExprKind::Binary(binop, _left, _right) = &mut expr.kind {
-            self.visit_span(&mut binop.span);
-        }
-        mut_visit::walk_expr(self, expr);
-    }
-
-    fn flat_map_stmt(&mut self, mut stmt: Stmt) -> SmallVec<[Stmt; 1]> {
-        self.visit_span(&mut stmt.span);
-        mut_visit::walk_flat_map_stmt(self, stmt)
     }
 }
 
